@@ -19,7 +19,7 @@ import (
 )
 
 func startMqtt(p *Printer) {
-	tlsCert := generateSelfSignedCert()
+	tlsCert := generateSelfSignedCert(p.IP)
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}
@@ -376,7 +376,7 @@ func wrapMqttPacket(fixedHeaderByte byte, body []byte) []byte {
 
 // --- TLS certificate generation ---
 
-func generateSelfSignedCert() tls.Certificate {
+func generateSelfSignedCert(ip string) tls.Certificate {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		log.Fatalf("Failed to generate TLS key: %v", err)
@@ -389,7 +389,7 @@ func generateSelfSignedCert() tls.Certificate {
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:  []net.IP{net.ParseIP("0.0.0.0")},
+		IPAddresses:  []net.IP{net.ParseIP(ip)},
 		DNSNames:     []string{"localhost"},
 	}
 

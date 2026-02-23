@@ -15,7 +15,7 @@ import (
 )
 
 func startCamera(p *Printer) {
-	tlsCert := generateSelfSignedCert()
+	tlsCert := generateSelfSignedCert(p.IP)
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}
