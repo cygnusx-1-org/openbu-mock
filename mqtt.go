@@ -189,6 +189,22 @@ func handleIncomingPublish(payload []byte, p *Printer, conn net.Conn, writeMu *s
 		return
 	}
 
+	// Handle get_version
+	if infoRaw, ok := msg["info"]; ok {
+		var info map[string]string
+		json.Unmarshal(infoRaw, &info)
+		if info["command"] == "get_version" {
+			log.Printf("MQTT [%s]: get_version requested", remote)
+			reportTopic := fmt.Sprintf("device/%s/report", p.Serial)
+			versionJSON := p.VersionJSON()
+			packet := buildPublishPacket(reportTopic, versionJSON)
+			writeMu.Lock()
+			conn.Write(packet)
+			writeMu.Unlock()
+		}
+		return
+	}
+
 	// Handle light control
 	if sysRaw, ok := msg["system"]; ok {
 		var sys map[string]any
@@ -207,6 +223,13 @@ func handleIncomingPublish(payload []byte, p *Printer, conn net.Conn, writeMu *s
 func publishStatus(conn net.Conn, writeMu *sync.Mutex, p *Printer) {
 	topic := fmt.Sprintf("device/%s/report", p.Serial)
 	statusJSON := p.StatusJSON()
+	if *debug {
+		var pretty json.RawMessage
+		if json.Unmarshal(statusJSON, &pretty) == nil {
+			indented, _ := json.MarshalIndent(pretty, "", "  ")
+			log.Printf("MQTT [%s] -> %s:\n%s", p.Serial, topic, indented)
+		}
+	}
 	packet := buildPublishPacket(topic, statusJSON)
 	writeMu.Lock()
 	conn.Write(packet)

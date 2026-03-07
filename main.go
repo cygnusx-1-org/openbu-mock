@@ -8,9 +8,12 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 )
+
+var debug *bool
 
 var serialPrefixes = map[string]string{
 	"A1-MINI": "030",
@@ -50,14 +53,15 @@ var amsTrayCounts = map[string]int{
 
 func main() {
 	model := flag.String("model", "", "Printer model (A1-Mini, A1, H2C, H2D, H2D-Pro, H2S, P1P, P1S, P2S, X1, X1C, X1E) (default: random)")
-	amsModel := flag.String("ams", "", "AMS model (AMS-HT, AMS, AMS-2-PRO)")
+	amsFlag := flag.String("ams", "", "AMS config: MODEL[:COUNT][,MODEL[:COUNT],...] (e.g. AMS:4, AMS-HT:2,AMS-2-PRO:3)")
 	extSpool := flag.String("external-spool", "", "External spool filament type (PLA, PETG, ABS, TPU, ASA, PA-CF, PA6-CF, PLA-CF, PETG-CF)")
 	accessCode := flag.String("access-code", "", "LAN access code (default: random 8 digits)")
 	count := flag.Int("count", 1, "Number of mock printers to create")
+	debug = flag.Bool("debug", false, "Print MQTT status JSON as it is published")
 	flag.Parse()
 
 	*model = strings.ToUpper(*model)
-	*amsModel = strings.ToUpper(*amsModel)
+	*amsFlag = strings.ToUpper(*amsFlag)
 	*extSpool = strings.ToUpper(*extSpool)
 	*accessCode = strings.ToUpper(*accessCode)
 	randomizeModel := *model == ""
@@ -69,12 +73,47 @@ func main() {
 		}
 	}
 
-	if *amsModel != "" {
-		if _, ok := amsTrayCounts[*amsModel]; !ok {
-			fmt.Fprintf(os.Stderr, "Unknown AMS model: %s\nValid models: AMS-HT, AMS, AMS-2-PRO\n", *amsModel)
+	// Parse AMS specs
+	var amsSpecs []AmsSpec
+	if *amsFlag != "" {
+		parts := strings.Split(*amsFlag, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			amsModel := part
+			amsCount := 1
+			if idx := strings.LastIndex(part, ":"); idx != -1 {
+				amsModel = part[:idx]
+				n, err := strconv.Atoi(part[idx+1:])
+				if err != nil || n < 1 {
+					fmt.Fprintf(os.Stderr, "Invalid AMS count in %q\n", part)
+					os.Exit(1)
+				}
+				amsCount = n
+			}
+			if _, ok := amsTrayCounts[amsModel]; !ok {
+				fmt.Fprintf(os.Stderr, "Unknown AMS model: %s\nValid models: AMS-HT, AMS, AMS-2-PRO\n", amsModel)
+				os.Exit(1)
+			}
+			amsSpecs = append(amsSpecs, AmsSpec{Model: amsModel, Count: amsCount})
+		}
+
+		// Validate total AMS count
+		totalAMS := 0
+		for _, s := range amsSpecs {
+			totalAMS += s.Count
+		}
+		maxAMS := 4
+		if !randomizeModel {
+			if *model == "H2D" || *model == "H2D-PRO" {
+				maxAMS = 12
+			}
+		}
+		if totalAMS > maxAMS {
+			fmt.Fprintf(os.Stderr, "Too many AMS units: %d (max %d for this printer)\n", totalAMS, maxAMS)
 			os.Exit(1)
 		}
 	}
+	randomizeAMS := *amsFlag == ""
 
 	if *extSpool != "" {
 		if _, ok := filamentInfo[*extSpool]; !ok {
@@ -144,11 +183,18 @@ func main() {
 			code = randomAlphaNum(8)
 		}
 
-		// Each printer gets a random AMS if not specified
-		ams := *amsModel
-		if ams == "" {
-			choices := []string{"", "AMS-HT", "AMS", "AMS-2-PRO"}
-			ams = choices[mrand.Intn(len(choices))]
+		// Each printer gets random AMS if not specified
+		specs := amsSpecs
+		if randomizeAMS {
+			amsModels := []string{"AMS-HT", "AMS", "AMS-2-PRO"}
+			// 25% chance of no AMS, otherwise 1-4 random units
+			if mrand.Intn(4) == 0 {
+				specs = nil
+			} else {
+				n := mrand.Intn(4) + 1
+				amsModel := amsModels[mrand.Intn(len(amsModels))]
+				specs = []AmsSpec{{Model: amsModel, Count: n}}
+			}
 		}
 
 		ext := *extSpool
@@ -156,7 +202,7 @@ func main() {
 			ext = "RANDOM"
 		}
 
-		printer := NewPrinter(serial, printerModel, allIPs[i], code, ams, ext)
+		printer := NewPrinter(serial, printerModel, allIPs[i], code, specs, ext)
 		printers = append(printers, printer)
 	}
 
@@ -167,14 +213,25 @@ func main() {
 	fmt.Println(strings.Repeat("-", 93))
 	for _, p := range printers {
 		amsInfo := "-"
-		if p.ams != nil {
-			loaded := 0
-			for _, t := range p.ams.Trays {
-				if t.TrayType != "" {
-					loaded++
+		if len(p.ams) > 0 {
+			// Count units by model
+			counts := map[string]int{}
+			totalLoaded := 0
+			totalTrays := 0
+			for _, a := range p.ams {
+				counts[a.Model]++
+				totalTrays += len(a.Trays)
+				for _, t := range a.Trays {
+					if t.TrayType != "" {
+						totalLoaded++
+					}
 				}
 			}
-			amsInfo = fmt.Sprintf("%s (%d/%dt)", p.ams.Model, loaded, len(p.ams.Trays))
+			var parts []string
+			for m, c := range counts {
+				parts = append(parts, fmt.Sprintf("%dx%s", c, m))
+			}
+			amsInfo = fmt.Sprintf("%s (%d/%dt)", strings.Join(parts, "+"), totalLoaded, totalTrays)
 		}
 		extInfo := "-"
 		if p.vtTray != nil {

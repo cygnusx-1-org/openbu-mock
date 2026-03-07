@@ -33,6 +33,7 @@ type Tray struct {
 }
 
 type AmsUnit struct {
+	ID    int // 0-3 for AMS/AMS-2-PRO, 128+ for AMS-HT
 	Model string
 	Trays []Tray
 }
@@ -55,11 +56,17 @@ type Printer struct {
 
 	mu      sync.RWMutex
 	lightOn bool
-	ams     *AmsUnit
+	ams     []*AmsUnit
 	vtTray  *VtTray
 }
 
-func NewPrinter(serial, model, ip, accessCode, amsModel, extSpool string) *Printer {
+// AmsSpec describes a requested AMS unit type and count.
+type AmsSpec struct {
+	Model string
+	Count int
+}
+
+func NewPrinter(serial, model, ip, accessCode string, amsSpecs []AmsSpec, extSpool string) *Printer {
 	p := &Printer{
 		Serial:     serial,
 		Model:      model,
@@ -68,25 +75,39 @@ func NewPrinter(serial, model, ip, accessCode, amsModel, extSpool string) *Print
 		DevModel:   devModelCodes[model],
 	}
 
-	if amsModel != "" {
-		trayCount := amsTrayCounts[amsModel]
-		a := &AmsUnit{Model: amsModel}
-		trayTypes := []string{"PLA", "PETG", "ABS", "TPU", "ASA", "PA-CF"}
-		for i := 0; i < trayCount; i++ {
-			// 30% chance of an empty tray
-			if mrand.Intn(10) < 3 {
-				a.Trays = append(a.Trays, Tray{
-					ID: fmt.Sprintf("%d", i),
-				})
+	// Assign AMS IDs: AMS-HT starts at 128, others start at 0
+	nextRegularID := 0
+	nextHTID := 128
+	trayTypes := []string{"PLA", "PETG", "ABS", "TPU", "ASA", "PA-CF"}
+
+	for _, spec := range amsSpecs {
+		trayCount := amsTrayCounts[spec.Model]
+		for n := 0; n < spec.Count; n++ {
+			id := nextRegularID
+			if spec.Model == "AMS-HT" {
+				id = nextHTID
+				nextHTID++
 			} else {
-				a.Trays = append(a.Trays, Tray{
-					ID:       fmt.Sprintf("%d", i),
-					TrayType: trayTypes[i%len(trayTypes)],
-					Color:    randomColor(),
-				})
+				nextRegularID++
 			}
+
+			a := &AmsUnit{ID: id, Model: spec.Model}
+			for i := 0; i < trayCount; i++ {
+				// 30% chance of an empty tray
+				if mrand.Intn(10) < 3 {
+					a.Trays = append(a.Trays, Tray{
+						ID: fmt.Sprintf("%d", i),
+					})
+				} else {
+					a.Trays = append(a.Trays, Tray{
+						ID:       fmt.Sprintf("%d", i),
+						TrayType: trayTypes[(id*4+i)%len(trayTypes)],
+						Color:    randomColor(),
+					})
+				}
+			}
+			p.ams = append(p.ams, a)
 		}
-		p.ams = a
 	}
 
 	// Resolve external spool: "RANDOM" means pick randomly (50% empty, 50% loaded)
@@ -245,74 +266,74 @@ func (p *Printer) StatusJSON() []byte {
 
 	// Add AMS data if configured
 	printMap := status["print"].(map[string]any)
-	if p.ams != nil {
-		trays := make([]map[string]any, len(p.ams.Trays))
+	if len(p.ams) > 0 {
+		var amsUnits []map[string]any
+		amsExistBits := 0
 		trayExistBits := 0
-		for i, t := range p.ams.Trays {
-			if t.TrayType == "" {
-				// Empty tray — just the id
-				trays[i] = map[string]any{
-					"id": t.ID,
-				}
-			} else {
-				trayExistBits |= 1 << (i + 4)
-				info := filamentInfo[t.TrayType]
-				trays[i] = map[string]any{
-					"id":              t.ID,
-					"state":           3,
-					"remain":          -1,
-					"k":               info.K,
-					"n":               1,
-					"cali_idx":        -1,
-					"total_len":       330000,
-					"tag_uid":         "0000000000000000",
-					"tray_id_name":    "",
-					"tray_info_idx":   info.InfoIdx,
-					"tray_type":       t.TrayType,
-					"tray_sub_brands": "",
-					"tray_color":      t.Color,
-					"tray_weight":     "0",
-					"tray_diameter":   "0.00",
-					"tray_temp":       "0",
-					"tray_time":       "0",
-					"bed_temp_type":   "0",
-					"bed_temp":        "0",
-					"nozzle_temp_max": info.NozzleTempMax,
-					"nozzle_temp_min": info.NozzleTempMin,
-					"xcam_info":       "000000000000000000000000",
-					"tray_uuid":       "00000000000000000000000000000000",
-					"ctype":           0,
-					"cols":            []string{t.Color},
+
+		for _, a := range p.ams {
+			trays := make([]map[string]any, len(a.Trays))
+			for i, t := range a.Trays {
+				if t.TrayType == "" {
+					trays[i] = map[string]any{
+						"id": t.ID,
+					}
+				} else {
+					// Tray bit position: for regular AMS (id 0-3), shift by (id+1)*4 + trayIdx
+					// For AMS-HT, use a separate range
+					bitPos := (a.ID+1)*4 + i
+					trayExistBits |= 1 << bitPos
+					info := filamentInfo[t.TrayType]
+					trays[i] = map[string]any{
+						"id":              t.ID,
+						"state":           3,
+						"remain":          -1,
+						"k":               info.K,
+						"n":               1,
+						"cali_idx":        -1,
+						"total_len":       330000,
+						"tag_uid":         "0000000000000000",
+						"tray_id_name":    "",
+						"tray_info_idx":   info.InfoIdx,
+						"tray_type":       t.TrayType,
+						"tray_sub_brands": "",
+						"tray_color":      t.Color,
+						"tray_weight":     "0",
+						"tray_diameter":   "0.00",
+						"tray_temp":       "0",
+						"tray_time":       "0",
+						"bed_temp_type":   "0",
+						"bed_temp":        "0",
+						"nozzle_temp_max": info.NozzleTempMax,
+						"nozzle_temp_min": info.NozzleTempMin,
+						"xcam_info":       "000000000000000000000000",
+						"tray_uuid":       "00000000000000000000000000000000",
+						"ctype":           0,
+						"cols":            []string{t.Color},
+					}
 				}
 			}
-		}
 
-		// AMS-HT uses id 128+, AMS and AMS-2-PRO use id 0-3
-		amsID := "0"
-		if p.ams.Model == "AMS-HT" {
-			amsID = "128"
-		}
+			amsExistBits |= 1 << a.ID
 
-		amsUnit := map[string]any{
-			"chip_id":      "",
-			"ams_id":       fmt.Sprintf("19F51A5827000H%d", 8),
-			"check":        0,
-			"id":           amsID,
-			"humidity":     "3",
-			"humidity_raw": "30",
-			"temp":         "23.9",
-			"info":         "2004",
-			"tray":         trays,
-		}
-
-		// AMS-2-PRO and AMS-HT support drying; AMS does not
-		if p.ams.Model == "AMS-2-PRO" || p.ams.Model == "AMS-HT" {
-			amsUnit["dry_time"] = 0
+			amsUnit := map[string]any{
+				"chip_id":      "",
+				"ams_id":       fmt.Sprintf("19F51A5827000H%d", a.ID),
+				"check":        0,
+				"id":           fmt.Sprintf("%d", a.ID),
+				"humidity":     "3",
+				"humidity_raw": "30",
+				"temp":         "23.9",
+				"info":         "2004",
+				"tray":         trays,
+				"dry_time":     0,
+			}
+			amsUnits = append(amsUnits, amsUnit)
 		}
 
 		printMap["ams"] = map[string]any{
-			"ams":                 []map[string]any{amsUnit},
-			"ams_exist_bits":      "1",
+			"ams":                 amsUnits,
+			"ams_exist_bits":      fmt.Sprintf("%X", amsExistBits),
 			"tray_exist_bits":     fmt.Sprintf("%X", trayExistBits),
 			"tray_is_bbl_bits":    fmt.Sprintf("%X", trayExistBits),
 			"tray_tar":           "255",
@@ -363,6 +384,113 @@ func (p *Printer) buildVtTray() map[string]any {
 		vt["k"] = p.vtTray.K
 	}
 	return vt
+}
+
+// AMS module metadata for get_version responses.
+var amsModuleMeta = map[string]struct {
+	NamePrefix  string
+	HwVer       string
+	ProductName string
+}{
+	"AMS":       {"ams", "AMS08", "AMS"},
+	"AMS-2-PRO": {"n3f", "N3F05", "AMS 2 Pro"},
+	"AMS-HT":    {"n3s", "N3S05", "AMS HT"},
+}
+
+// Printer product names for the ota module.
+var printerProductNames = map[string]string{
+	"A1-MINI": "Bambu Lab A1 mini",
+	"A1":      "Bambu Lab A1",
+	"H2C":     "Bambu Lab H2C",
+	"H2D":     "Bambu Lab H2D",
+	"H2D-PRO": "Bambu Lab H2D Pro",
+	"H2S":     "Bambu Lab H2S",
+	"P1P":     "Bambu Lab P1P",
+	"P1S":     "Bambu Lab P1S",
+	"P2S":     "Bambu Lab P2S",
+	"X1":      "Bambu Lab X1",
+	"X1C":     "Bambu Lab X1-Carbon",
+	"X1E":     "Bambu Lab X1E",
+}
+
+func (p *Printer) VersionJSON() []byte {
+	modules := []map[string]any{
+		{
+			"name":         "ota",
+			"project_name": "",
+			"sw_ver":       "01.09.01.00",
+			"hw_ver":       "",
+			"sn":           p.Serial,
+			"flag":         0,
+			"product_name": printerProductNames[p.Model],
+			"visible":      true,
+		},
+		{
+			"name":         "mc",
+			"project_name": "",
+			"sw_ver":       "11.0302.00.98",
+			"hw_ver":       "",
+			"sn":           "",
+			"flag":         0,
+			"product_name": "",
+			"visible":      false,
+		},
+		{
+			"name":         "th",
+			"project_name": "",
+			"sw_ver":       "00.00.06.02",
+			"hw_ver":       "",
+			"sn":           "",
+			"flag":         0,
+			"product_name": "",
+			"visible":      false,
+		},
+	}
+
+	hasHub := false
+	for i, a := range p.ams {
+		meta := amsModuleMeta[a.Model]
+
+		modules = append(modules, map[string]any{
+			"name":         fmt.Sprintf("%s/%d", meta.NamePrefix, a.ID),
+			"project_name": "",
+			"sw_ver":       "00.00.06.38",
+			"hw_ver":       meta.HwVer,
+			"sn":           "",
+			"flag":         0,
+			"product_name": fmt.Sprintf("%s (%d)", meta.ProductName, i+1),
+			"visible":      true,
+		})
+
+		if a.Model != "AMS-HT" {
+			hasHub = true
+		}
+	}
+
+	// AMS Hub needed when any non-HT AMS is present
+	if hasHub {
+		modules = append(modules, map[string]any{
+			"name":         "ahb",
+			"project_name": "",
+			"sw_ver":       "00.02.00.58",
+			"hw_ver":       "",
+			"sn":           "",
+			"flag":         0,
+			"product_name": "",
+			"visible":      true,
+		})
+	}
+
+	resp := map[string]any{
+		"info": map[string]any{
+			"command":     "get_version",
+			"sequence_id": "0",
+			"module":      modules,
+		},
+	}
+
+	data, _ := json.Marshal(resp)
+	return data
 }
 
 func randomColor() string {
