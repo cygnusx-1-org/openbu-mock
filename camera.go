@@ -55,7 +55,7 @@ func handleCameraConnection(conn net.Conn, p *Printer) {
 	// Validate auth header
 	magic := binary.LittleEndian.Uint32(auth[0:4])
 	if magic != 0x40 {
-		log.Printf("Camera [%s]: invalid auth magic: 0x%X", remote, magic)
+		log.Printf("Camera [%s]: invalid auth magic: 0x%X (expected 0x40)", remote, magic)
 		return
 	}
 
@@ -71,23 +71,90 @@ func handleCameraConnection(conn net.Conn, p *Printer) {
 	log.Printf("Camera [%s]: authenticated, streaming", remote)
 	conn.SetReadDeadline(time.Time{}) // clear deadline
 
-	// Stream JPEG frames at ~10 fps, regenerating each frame to reflect current state
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
+	// Drain any client data to prevent TCP backpressure
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
 
-	for range ticker.C {
-		frame := generateTestFrame(p)
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		if _, err := conn.Write(frame); err != nil {
-			log.Printf("Camera [%s]: write error, disconnecting", remote)
+	// Stream JPEG frames
+	// Protocol: each frame (including the first, which serves as the auth response)
+	// is preceded by a 16-byte header:
+	//   bytes 0-3: JPEG payload size (little-endian uint32)
+	//   bytes 4-7: 0x00000000
+	//   bytes 8-11: 0x00000001
+	//   bytes 12-15: 0x00000000
+	//
+	// A producer goroutine generates frames at ~10fps into a channel.
+	// The send loop always drains to the latest frame before writing,
+	// so the client sees current state even if it reads slowly.
+	frameCh := make(chan []byte, 2)
+	go func() {
+		defer close(frameCh)
+		for {
+			time.Sleep(100 * time.Millisecond)
+			jpegData := generateTestFrame(p)
+
+			// Build 16-byte frame header
+			header := make([]byte, 16)
+			binary.LittleEndian.PutUint32(header[0:4], uint32(len(jpegData)))
+			binary.LittleEndian.PutUint32(header[8:12], 1)
+
+			frame := append(header, jpegData...)
+			select {
+			case frameCh <- frame:
+			default:
+				// Drop oldest frame, send latest
+				select {
+				case <-frameCh:
+				default:
+				}
+				frameCh <- frame
+			}
+		}
+	}()
+
+	frameCount := 0
+	for frame := range frameCh {
+		// Drain to latest available frame
+	drain:
+		for {
+			select {
+			case newer, ok := <-frameCh:
+				if !ok {
+					return
+				}
+				frame = newer
+			default:
+				break drain
+			}
+		}
+
+		frameCount++
+		if frameCount == 1 {
+			log.Printf("Camera [%s]: first frame: header=%X, jpeg=%d bytes",
+				remote, frame[:16], len(frame)-16)
+		}
+
+		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		n, err := conn.Write(frame)
+		if err != nil {
+			log.Printf("Camera [%s]: write error after %d frames (%d/%d bytes): %v", remote, frameCount, n, len(frame), err)
 			return
+		}
+		if frameCount%100 == 0 {
+			log.Printf("Camera [%s]: streamed %d frames", remote, frameCount)
 		}
 	}
 }
 
 // generateTestFrame creates a minimal JPEG image with printer info text.
 func generateTestFrame(p *Printer) []byte {
-	width, height := 640, 480
+	width, height := 1280, 720
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
 	lightOn := p.LightOn()
