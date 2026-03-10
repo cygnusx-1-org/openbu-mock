@@ -181,14 +181,7 @@ func (p *Printer) StatusJSON() []byte {
 				"cur_state_code":    0,
 				"new_ver_list":      []any{},
 			},
-			"ipcam": map[string]any{
-				"ipcam_dev":    "1",
-				"ipcam_record": "enable",
-				"timelapse":    "disable",
-				"resolution":   "",
-				"tutk_server":  "disable",
-				"mode_bits":    3,
-			},
+			"ipcam": p.buildIpcam(),
 			"upload": map[string]any{
 				"status":   "idle",
 				"progress": 0,
@@ -349,6 +342,27 @@ func (p *Printer) StatusJSON() []byte {
 
 	data, _ := json.Marshal(status)
 	return data
+}
+
+func (p *Printer) buildIpcam() map[string]any {
+	if p.Model == "P1P" || p.Model == "P1S" {
+		return map[string]any{
+			"ipcam_dev":    "1",
+			"ipcam_record": "enable",
+			"timelapse":    "disable",
+			"resolution":   "",
+			"tutk_server":  "disable",
+			"mode_bits":    3,
+		}
+	}
+	return map[string]any{
+		"ipcam_dev":    "0",
+		"ipcam_record": "disable",
+		"timelapse":    "disable",
+		"resolution":   "",
+		"tutk_server":  "disable",
+		"mode_bits":    0,
+	}
 }
 
 func (p *Printer) buildVtTray() map[string]any {

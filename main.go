@@ -252,7 +252,9 @@ func main() {
 	go startSsdp(printers)
 	for _, p := range printers {
 		go startMqtt(p)
-		go startCamera(p)
+		if p.Model == "P1P" || p.Model == "P1S" {
+			go startCamera(p)
+		}
 	}
 
 	// Wait for signal, then cleanup
