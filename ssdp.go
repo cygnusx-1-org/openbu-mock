@@ -36,7 +36,9 @@ func startSsdp(printers []*Printer) {
 
 	// Send initial NOTIFY for all printers
 	for _, p := range printers {
-		sendConn.Write([]byte(buildNotify(p)))
+		if _, err := sendConn.Write([]byte(buildNotify(p))); err != nil {
+			log.Printf("SSDP: failed to send initial NOTIFY for %s: %v", p.Serial, err)
+		}
 	}
 	log.Printf("SSDP: sent initial NOTIFY for %d printer(s)", len(printers))
 
@@ -47,7 +49,12 @@ func startSsdp(printers []*Printer) {
 	go func() {
 		for range ticker.C {
 			for _, p := range printers {
-				sendConn.Write([]byte(buildNotify(p)))
+				if _, err := sendConn.Write([]byte(buildNotify(p))); err != nil {
+					log.Printf("SSDP: failed to send periodic NOTIFY for %s: %v", p.Serial, err)
+				}
+			}
+			if *debug {
+				log.Printf("SSDP: sent periodic NOTIFY for %d printer(s)", len(printers))
 			}
 		}
 	}()
@@ -57,17 +64,30 @@ func startSsdp(printers []*Printer) {
 	for {
 		n, remoteAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
+			if *debug {
+				log.Printf("SSDP: read error: %v", err)
+			}
 			continue
 		}
 		msg := string(buf[:n])
+		if *debug {
+			log.Printf("SSDP: received %d bytes from %s", n, remoteAddr)
+		}
 		if strings.Contains(msg, "M-SEARCH") {
 			log.Printf("SSDP: received M-SEARCH from %s", remoteAddr)
 			responseConn, err := net.DialUDP("udp4", nil, remoteAddr)
-			if err == nil {
+			if err != nil {
+				log.Printf("SSDP: failed to dial %s for M-SEARCH response: %v", remoteAddr, err)
+			} else {
 				for _, p := range printers {
-					responseConn.Write([]byte(buildNotify(p)))
+					if _, err := responseConn.Write([]byte(buildNotify(p))); err != nil {
+						log.Printf("SSDP: failed to send M-SEARCH response for %s to %s: %v", p.Serial, remoteAddr, err)
+					}
 				}
 				responseConn.Close()
+				if *debug {
+					log.Printf("SSDP: sent M-SEARCH response (%d printers) to %s", len(printers), remoteAddr)
+				}
 			}
 		}
 	}

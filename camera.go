@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-func startCamera(p *Printer) {
-	tlsCert := generateSelfSignedCert(p.IP)
+func startCamera(ca *CA, p *Printer) {
+	tlsCert := generateCertChain(ca, p.Serial, p.IP)
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}

@@ -248,12 +248,21 @@ func main() {
 	fmt.Println("Press Ctrl+C to stop.")
 	fmt.Println()
 
+	// Load or generate shared CA
+	ca, created := LoadOrGenerateCA("ca.pem", "ca-key.pem")
+	if created {
+		fmt.Println("Generated new CA certificate: ca.pem / ca-key.pem")
+	} else {
+		fmt.Println("Loaded existing CA certificate: ca.pem / ca-key.pem")
+	}
+	fmt.Println()
+
 	// Start services
 	go startSsdp(printers)
 	for _, p := range printers {
-		go startMqtt(p)
+		go startMqtt(ca, p)
 		if p.Model == "P1P" || p.Model == "P1S" {
-			go startCamera(p)
+			go startCamera(ca, p)
 		}
 	}
 

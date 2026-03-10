@@ -427,7 +427,7 @@ var printerProductNames = map[string]string{
 	"X1E":     "Bambu Lab X1E",
 }
 
-func (p *Printer) VersionJSON() []byte {
+func (p *Printer) VersionJSON(sequenceID string) []byte {
 	modules := []map[string]any{
 		{
 			"name":         "ota",
@@ -498,7 +498,7 @@ func (p *Printer) VersionJSON() []byte {
 	resp := map[string]any{
 		"info": map[string]any{
 			"command":     "get_version",
-			"sequence_id": "0",
+			"sequence_id": sequenceID,
 			"module":      modules,
 		},
 	}
