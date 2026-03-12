@@ -167,26 +167,9 @@ func (p *Printer) StatusJSON() []byte {
 
 	status := map[string]any{
 		"print": map[string]any{
-			"upgrade_state": map[string]any{
-				"sequence_id":         0,
-				"progress":            "",
-				"status":              "IDLE",
-				"consistency_request": false,
-				"dis_state":           0,
-				"err_code":            0,
-				"force_upgrade":       false,
-				"message":             "0%, 0B/s",
-				"module":              "",
-				"new_version_state":   0,
-				"cur_state_code":      0,
-				"new_ver_list":        []any{},
-			},
+			"upgrade_state": p.buildUpgradeState(),
 			"ipcam": p.buildIpcam(),
-			"upload": map[string]any{
-				"status":   "idle",
-				"progress": 0,
-				"message":  "",
-			},
+			"upload": p.buildUpload(),
 			"nozzle_temper":              26.5,
 			"nozzle_target_temper":       0,
 			"bed_temper":                 24.0,
@@ -234,114 +217,119 @@ func (p *Printer) StatusJSON() []byte {
 			"filam_bak":                  []any{},
 			"fan_gear":                   0,
 			"nozzle_diameter":            "0.4",
-			"nozzle_type":                "hardened_steel",
+			"nozzle_type":                p.nozzleType(),
 			"cali_version":               0,
 			"k":                          "0.0200",
 			"flag3":                      8847,
 			"hms":                        []any{},
-			"online": map[string]any{
-				"ahb":     false,
-				"rfid":    false,
-				"version": 1271180554,
-			},
+			"online": p.buildOnline(),
 			"vt_tray": p.buildVtTray(),
-			"lights_report": []map[string]any{
-				{
-					"node": "chamber_light",
-					"mode": lightMode,
-				},
-			},
+			"lights_report": p.buildLightsReport(lightMode),
 			"command":     "push_status",
 			"msg":         0,
 			"sequence_id": "0",
 		},
 	}
 
-	// Add AMS data if configured
+	// Always emit AMS block (real printers send it even with no AMS units)
 	printMap := status["print"].(map[string]any)
-	if len(p.ams) > 0 {
-		var amsUnits []map[string]any
-		amsExistBits := 0
-		trayExistBits := 0
+	var amsUnits []map[string]any
+	amsExistBits := 0
+	trayExistBits := 0
 
-		for _, a := range p.ams {
-			trays := make([]map[string]any, len(a.Trays))
-			for i, t := range a.Trays {
-				if t.TrayType == "" {
-					trays[i] = map[string]any{
-						"id": t.ID,
-					}
-				} else {
-					// Tray bit position: for regular AMS (id 0-3), shift by (id+1)*4 + trayIdx
-					// For AMS-HT, use a separate range
-					bitPos := (a.ID+1)*4 + i
-					trayExistBits |= 1 << bitPos
-					info := filamentInfo[t.TrayType]
-					trays[i] = map[string]any{
-						"id":              t.ID,
-						"state":           3,
-						"remain":          -1,
-						"k":               info.K,
-						"n":               1,
-						"cali_idx":        -1,
-						"total_len":       330000,
-						"tag_uid":         "0000000000000000",
-						"tray_id_name":    "",
-						"tray_info_idx":   info.InfoIdx,
-						"tray_type":       t.TrayType,
-						"tray_sub_brands": "",
-						"tray_color":      t.Color,
-						"tray_weight":     "0",
-						"tray_diameter":   "0.00",
-						"tray_temp":       "0",
-						"tray_time":       "0",
-						"bed_temp_type":   "0",
-						"bed_temp":        "0",
-						"nozzle_temp_max": info.NozzleTempMax,
-						"nozzle_temp_min": info.NozzleTempMin,
-						"xcam_info":       "000000000000000000000000",
-						"tray_uuid":       "00000000000000000000000000000000",
-						"ctype":           0,
-						"cols":            []string{t.Color},
-					}
+	for _, a := range p.ams {
+		trays := make([]map[string]any, len(a.Trays))
+		for i, t := range a.Trays {
+			if t.TrayType == "" {
+				trays[i] = map[string]any{
+					"id": t.ID,
 				}
+			} else {
+				// Tray bit position: for regular AMS (id 0-3), shift by (id+1)*4 + trayIdx
+				// For AMS-HT, use a separate range
+				bitPos := (a.ID+1)*4 + i
+				trayExistBits |= 1 << bitPos
+				info := filamentInfo[t.TrayType]
+				tray := map[string]any{
+					"id":              t.ID,
+					"remain":          -1,
+					"cali_idx":        -1,
+					"tag_uid":         "0000000000000000",
+					"tray_id_name":    "",
+					"tray_info_idx":   info.InfoIdx,
+					"tray_type":       t.TrayType,
+					"tray_sub_brands": "",
+					"tray_color":      t.Color,
+					"tray_weight":     "0",
+					"tray_diameter":   "0.00",
+					"bed_temp_type":   "0",
+					"bed_temp":        "0",
+					"nozzle_temp_max": info.NozzleTempMax,
+					"nozzle_temp_min": info.NozzleTempMin,
+					"xcam_info":       "000000000000000000000000",
+					"tray_uuid":       "00000000000000000000000000000000",
+				}
+				if p.isX1Family() {
+					tray["drying_temp"] = "0"
+					tray["drying_time"] = "0"
+					tray["ctype"] = 0
+					tray["cols"] = []string{t.Color}
+				} else {
+					tray["k"] = info.K
+					tray["n"] = 1
+					tray["state"] = 3
+					tray["total_len"] = 330000
+					tray["tray_temp"] = "0"
+					tray["tray_time"] = "0"
+				}
+				trays[i] = tray
 			}
-
-			amsExistBits |= 1 << a.ID
-
-			amsUnit := map[string]any{
-				"chip_id":      "",
-				"ams_id":       fmt.Sprintf("19F51A5827000H%d", a.ID),
-				"check":        0,
-				"id":           fmt.Sprintf("%d", a.ID),
-				"humidity":     "3",
-				"humidity_raw": "30",
-				"temp":         "23.9",
-				"info":         "2004",
-				"tray":         trays,
-				"dry_time":     0,
-			}
-			amsUnits = append(amsUnits, amsUnit)
 		}
 
-		printMap["ams"] = map[string]any{
-			"ams":                 amsUnits,
-			"ams_exist_bits":      fmt.Sprintf("%X", amsExistBits),
-			"tray_exist_bits":     fmt.Sprintf("%X", trayExistBits),
-			"tray_is_bbl_bits":    fmt.Sprintf("%X", trayExistBits),
-			"tray_tar":            "255",
-			"tray_now":            "255",
-			"tray_pre":            "255",
-			"tray_read_done_bits": fmt.Sprintf("%X", trayExistBits),
-			"tray_reading_bits":   "0",
-			"version":             2,
-			"insert_flag":         true,
-			"power_on_flag":       false,
+		amsExistBits |= 1 << a.ID
+
+		amsUnit := map[string]any{
+			"id":       fmt.Sprintf("%d", a.ID),
+			"humidity": "3",
+			"temp":     "23.9",
+			"tray":     trays,
 		}
+		amsUnits = append(amsUnits, amsUnit)
+	}
+
+	amsVersion := 1
+	if len(p.ams) > 0 {
+		amsVersion = 2
+	}
+
+	printMap["ams"] = map[string]any{
+		"ams":                 amsUnits,
+		"ams_exist_bits":      fmt.Sprintf("%x", amsExistBits),
+		"tray_exist_bits":     fmt.Sprintf("%x", trayExistBits),
+		"tray_is_bbl_bits":    fmt.Sprintf("%x", trayExistBits),
+		"tray_tar":            "255",
+		"tray_now":            "255",
+		"tray_pre":            "255",
+		"tray_read_done_bits": fmt.Sprintf("%x", trayExistBits),
+		"tray_reading_bits":   "0",
+		"version":             amsVersion,
+		"insert_flag":         true,
+		"power_on_flag":       false,
 	}
 
 	data, _ := json.Marshal(status)
 	return data
+}
+
+func (p *Printer) isX1Family() bool {
+	return p.Model == "X1" || p.Model == "X1C" || p.Model == "X1E"
+}
+
+func (p *Printer) nozzleType() string {
+	if p.Model == "A1-MINI" || p.Model == "A1" {
+		return "stainless_steel"
+	}
+	return "hardened_steel"
 }
 
 const (
@@ -351,6 +339,16 @@ const (
 )
 
 func (p *Printer) buildIpcam() map[string]any {
+	if p.Model == "A1-MINI" || p.Model == "A1" {
+		return map[string]any{
+			"ipcam_dev":    "1",
+			"ipcam_record": "enable",
+			"timelapse":    "disable",
+			"resolution":   "1080p",
+			"tutk_server":  "disable",
+			"mode_bits":    3,
+		}
+	}
 	if p.Model == "P1P" || p.Model == "P1S" {
 		return map[string]any{
 			"ipcam_dev":    "1",
@@ -368,43 +366,157 @@ func (p *Printer) buildIpcam() map[string]any {
 		"resolution":   "1080p",
 		"rtsp_url":     fmt.Sprintf("rtsps://%s:%s@%s:%d%s", rtspUsername, p.AccessCode, p.IP, rtspPort, rtspPath),
 		"timelapse":    "disable",
-		"tutk_server":  "true",
+		"tutk_server":  "enable",
 	}
 }
 
 func (p *Printer) buildVtTray() map[string]any {
+	color := "00000000"
+	trayType := ""
+	trayInfoIdx := ""
+	nozzleTempMax := "0"
+	nozzleTempMin := "0"
+	k := 0.02
+	if p.vtTray != nil {
+		color = p.vtTray.Color
+		trayType = p.vtTray.TrayType
+		trayInfoIdx = p.vtTray.TrayInfoIdx
+		nozzleTempMax = p.vtTray.NozzleTempMax
+		nozzleTempMin = p.vtTray.NozzleTempMin
+		k = p.vtTray.K
+	}
 	vt := map[string]any{
 		"id":              "254",
 		"tag_uid":         "0000000000000000",
 		"tray_id_name":    "",
-		"tray_info_idx":   "",
-		"tray_type":       "",
+		"tray_info_idx":   trayInfoIdx,
+		"tray_type":       trayType,
 		"tray_sub_brands": "",
-		"tray_color":      "FFFFFF00",
+		"tray_color":      color,
 		"tray_weight":     "0",
 		"tray_diameter":   "0.00",
-		"tray_temp":       "0",
-		"tray_time":       "0",
 		"bed_temp_type":   "0",
 		"bed_temp":        "0",
-		"nozzle_temp_max": "0",
-		"nozzle_temp_min": "0",
+		"nozzle_temp_max": nozzleTempMax,
+		"nozzle_temp_min": nozzleTempMin,
 		"xcam_info":       "000000000000000000000000",
 		"tray_uuid":       "00000000000000000000000000000000",
 		"remain":          0,
-		"k":               0.02,
-		"n":               1,
 		"cali_idx":        -1,
 	}
-	if p.vtTray != nil {
-		vt["tray_type"] = p.vtTray.TrayType
-		vt["tray_info_idx"] = p.vtTray.TrayInfoIdx
-		vt["tray_color"] = p.vtTray.Color
-		vt["nozzle_temp_max"] = p.vtTray.NozzleTempMax
-		vt["nozzle_temp_min"] = p.vtTray.NozzleTempMin
-		vt["k"] = p.vtTray.K
+	if p.isX1Family() {
+		vt["cols"] = []string{color}
+		vt["ctype"] = 0
+		vt["drying_temp"] = "0"
+		vt["drying_time"] = "0"
+	} else {
+		vt["tray_temp"] = "0"
+		vt["tray_time"] = "0"
+		vt["k"] = k
+		vt["n"] = 1
 	}
 	return vt
+}
+
+func (p *Printer) buildUpgradeState() map[string]any {
+	if p.isX1Family() {
+		return map[string]any{
+			"sequence_id":              0,
+			"progress":                 "0",
+			"status":                   "IDLE",
+			"consistency_request":      false,
+			"dis_state":                0,
+			"err_code":                 0,
+			"force_upgrade":            false,
+			"message":                  "",
+			"module":                   "",
+			"new_version_state":        2,
+			"ahb_new_version_number":   "",
+			"ams_new_version_number":   "",
+			"ext_new_version_number":   "",
+			"ota_new_version_number":   "",
+			"idx":                      0,
+			"sn":                       p.Serial,
+		}
+	}
+	return map[string]any{
+		"sequence_id":         0,
+		"progress":            "",
+		"status":              "IDLE",
+		"consistency_request": false,
+		"dis_state":           0,
+		"err_code":            0,
+		"force_upgrade":       false,
+		"message":             "0%, 0B/s",
+		"module":              "",
+		"new_version_state":   0,
+		"cur_state_code":      0,
+		"new_ver_list":        []any{},
+	}
+}
+
+func (p *Printer) buildUpload() map[string]any {
+	if p.isX1Family() {
+		return map[string]any{
+			"status":         "idle",
+			"progress":       0,
+			"message":        "Good",
+			"file_size":      0,
+			"finish_size":    0,
+			"oss_url":        "",
+			"sequence_id":    "0903",
+			"speed":          0,
+			"task_id":        "",
+			"time_remaining": 0,
+			"trouble_id":     "",
+		}
+	}
+	return map[string]any{
+		"status":   "idle",
+		"progress": 0,
+		"message":  "",
+	}
+}
+
+func (p *Printer) buildOnline() map[string]any {
+	if p.isX1Family() {
+		return map[string]any{
+			"ahb":     false,
+			"ext":     false,
+			"version": 7,
+		}
+	}
+	return map[string]any{
+		"ahb":     false,
+		"rfid":    false,
+		"version": 1271180554,
+	}
+}
+
+func (p *Printer) isH2Family() bool {
+	return p.Model == "H2C" || p.Model == "H2D" || p.Model == "H2D-PRO" || p.Model == "H2S"
+}
+
+func (p *Printer) buildLightsReport(lightMode string) []map[string]any {
+	report := []map[string]any{
+		{
+			"node": "chamber_light",
+			"mode": lightMode,
+		},
+	}
+	if p.isX1Family() || p.isH2Family() {
+		report = append(report, map[string]any{
+			"node": "work_light",
+			"mode": "flashing",
+		})
+	}
+	if p.Model == "H2C" || p.Model == "H2D" {
+		report = append(report, map[string]any{
+			"node": "chamber_light2",
+			"mode": lightMode,
+		})
+	}
+	return report
 }
 
 // AMS module metadata for get_version responses.
@@ -466,6 +578,17 @@ func (p *Printer) VersionJSON(sequenceID string) []byte {
 			"product_name": "",
 			"visible":      false,
 		},
+	}
+
+	if p.Model == "A1-MINI" || p.Model == "A1" {
+		modules = append(modules, map[string]any{
+			"name":         "esp32",
+			"project_name": "",
+			"sw_ver":       "01.11.33.52",
+			"hw_ver":       "AP07",
+			"sn":           "",
+			"flag":         0,
+		})
 	}
 
 	hasHub := false

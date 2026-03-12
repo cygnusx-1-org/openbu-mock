@@ -53,7 +53,7 @@ var amsTrayCounts = map[string]int{
 
 func main() {
 	model := flag.String("model", "", "Printer model (A1-Mini, A1, H2C, H2D, H2D-Pro, H2S, P1P, P1S, P2S, X1, X1C, X1E) (default: random)")
-	amsFlag := flag.String("ams", "", "AMS config: MODEL[:COUNT][,MODEL[:COUNT],...] (e.g. AMS:4, AMS-HT:2,AMS-2-PRO:3)")
+	amsFlag := flag.String("ams", "", "AMS config: NONE or MODEL[:COUNT][,MODEL[:COUNT],...] (e.g. NONE, AMS:4, AMS-HT:2,AMS-2-PRO:3)")
 	extSpool := flag.String("external-spool", "", "External spool filament type (PLA, PETG, ABS, TPU, ASA, PA-CF, PA6-CF, PLA-CF, PETG-CF)")
 	accessCode := flag.String("access-code", "", "LAN access code (default: random 8 digits)")
 	count := flag.Int("count", 1, "Number of mock printers to create")
@@ -75,7 +75,8 @@ func main() {
 
 	// Parse AMS specs
 	var amsSpecs []AmsSpec
-	if *amsFlag != "" {
+	randomizeAMS := *amsFlag == ""
+	if *amsFlag != "" && *amsFlag != "NONE" {
 		parts := strings.Split(*amsFlag, ",")
 		for _, part := range parts {
 			part = strings.TrimSpace(part)
@@ -91,7 +92,7 @@ func main() {
 				amsCount = n
 			}
 			if _, ok := amsTrayCounts[amsModel]; !ok {
-				fmt.Fprintf(os.Stderr, "Unknown AMS model: %s\nValid models: AMS-HT, AMS, AMS-2-PRO\n", amsModel)
+				fmt.Fprintf(os.Stderr, "Unknown AMS model: %s\nValid models: NONE, AMS-HT, AMS, AMS-2-PRO\n", amsModel)
 				os.Exit(1)
 			}
 			amsSpecs = append(amsSpecs, AmsSpec{Model: amsModel, Count: amsCount})
@@ -113,7 +114,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	randomizeAMS := *amsFlag == ""
 
 	if *extSpool != "" {
 		if _, ok := filamentInfo[*extSpool]; !ok {
