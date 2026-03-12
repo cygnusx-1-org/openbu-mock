@@ -237,9 +237,9 @@ func generateTestFrame(p *Printer) []byte {
 
 	// raw[0:2] is FF D8 (SOI), rest follows
 	var out bytes.Buffer
-	out.Write(raw[:2])   // SOI
-	out.Write(jfifApp0)  // JFIF APP0
-	out.Write(raw[2:])   // rest of JPEG
+	out.Write(raw[:2])  // SOI
+	out.Write(jfifApp0) // JFIF APP0
+	out.Write(raw[2:])  // rest of JPEG
 	return out.Bytes()
 }
 
