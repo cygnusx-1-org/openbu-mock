@@ -302,9 +302,11 @@ func (p *Printer) StatusJSON() []byte {
 		amsVersion = 2
 	}
 
+	amsExistBitsStr := fmt.Sprintf("%x", amsExistBits)
 	printMap["ams"] = map[string]any{
 		"ams":                 amsUnits,
-		"ams_exist_bits":      fmt.Sprintf("%x", amsExistBits),
+		"ams_exist_bits":      amsExistBitsStr,
+		"ams_exist_bits_raw":  amsExistBitsStr,
 		"tray_exist_bits":     fmt.Sprintf("%x", trayExistBits),
 		"tray_is_bbl_bits":    fmt.Sprintf("%x", trayExistBits),
 		"tray_tar":            "255",
@@ -359,7 +361,7 @@ func (p *Printer) buildIpcam() map[string]any {
 			"mode_bits":    3,
 		}
 	}
-	return map[string]any{
+	ipcam := map[string]any{
 		"ipcam_dev":    "1",
 		"ipcam_record": "enable",
 		"mode_bits":    2,
@@ -368,6 +370,10 @@ func (p *Printer) buildIpcam() map[string]any {
 		"timelapse":    "disable",
 		"tutk_server":  "enable",
 	}
+	if p.isX1Family() {
+		ipcam["agora_service"] = "disable"
+	}
+	return ipcam
 }
 
 func (p *Printer) buildVtTray() map[string]any {
@@ -479,15 +485,16 @@ func (p *Printer) buildUpload() map[string]any {
 }
 
 func (p *Printer) buildOnline() map[string]any {
+	ahb := len(p.ams) >= 2
 	if p.isX1Family() {
 		return map[string]any{
-			"ahb":     false,
+			"ahb":     ahb,
 			"ext":     false,
 			"version": 7,
 		}
 	}
 	return map[string]any{
-		"ahb":     false,
+		"ahb":     ahb,
 		"rfid":    false,
 		"version": 1271180554,
 	}
