@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -461,6 +462,9 @@ func handleIncomingPublish(payload []byte, p *Printer, conn net.Conn, writeMu *s
 		log.Printf("MQTT [%s]: publish to unexpected topic %q (expected %q)", remote, topic, expectedRequest)
 		return
 	}
+
+	// Strip trailing null bytes (Bambu firmware sends them)
+	msgData = bytes.TrimRight(msgData, "\x00")
 
 	// Parse the JSON command
 	var msg map[string]json.RawMessage
