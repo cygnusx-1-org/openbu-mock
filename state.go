@@ -15,15 +15,15 @@ var filamentInfo = map[string]struct {
 	NozzleTempMin string
 	K             float64
 }{
-	"PLA":     {"GFL99", "240", "190", 0.02},
-	"PETG":    {"GFG99", "260", "220", 0.02},
-	"ABS":     {"GFA01", "270", "240", 0.02},
-	"TPU":     {"GFU99", "240", "200", 0.02},
-	"ASA":     {"GFS01", "270", "240", 0.02},
+	"PLA":     {"GFA00", "240", "190", 0.02},
+	"PETG":    {"GFG00", "260", "230", 0.04},
+	"ABS":     {"GFB00", "280", "240", 0.04},
+	"TPU":     {"GFU01", "250", "200", 0.20},
+	"ASA":     {"GFB01", "280", "240", 0.04},
 	"PA-CF":   {"GFN03", "300", "260", 0.02},
 	"PA6-CF":  {"GFN05", "300", "260", 0.02},
-	"PLA-CF":  {"GFL50", "240", "190", 0.02},
-	"PETG-CF": {"GFG50", "280", "240", 0.02},
+	"PLA-CF":  {"GFA50", "240", "190", 0.02},
+	"PETG-CF": {"GFG50", "280", "240", 0.04},
 }
 
 type Tray struct {
@@ -247,7 +247,7 @@ func (p *Printer) StatusJSON() []byte {
 			} else {
 				// Tray bit position: for regular AMS (id 0-3), shift by (id+1)*4 + trayIdx
 				// For AMS-HT, use a separate range
-				bitPos := (a.ID+1)*4 + i
+				bitPos := a.ID*4 + i
 				trayExistBits |= 1 << bitPos
 				info := filamentInfo[t.TrayType]
 				tray := map[string]any{
