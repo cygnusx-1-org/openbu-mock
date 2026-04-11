@@ -57,6 +57,7 @@ func main() {
 	extSpool := flag.String("external-spool", "", "External spool filament type (PLA, PETG, ABS, TPU, ASA, PA-CF, PA6-CF, PLA-CF, PETG-CF)")
 	accessCode := flag.String("access-code", "", "LAN access code (default: random 8 digits)")
 	count := flag.Int("count", 1, "Number of mock printers to create")
+	hmsPreset := flag.Int("hms", 0, "HMS error preset number to inject (0 = random, model-specific; P2S: 1-3, X1/X1C/X1E: 1-4)")
 	debug = flag.Bool("debug", false, "Print MQTT status JSON as it is published")
 	flag.Parse()
 
@@ -122,6 +123,23 @@ func main() {
 		}
 	}
 	randomizeExtSpool := *extSpool == ""
+
+	if *hmsPreset < 0 {
+		fmt.Fprintf(os.Stderr, "Invalid --hms preset: %d (must be >= 0; 0 = random)\n", *hmsPreset)
+		os.Exit(1)
+	}
+	if *hmsPreset > 0 && !randomizeModel {
+		key := hmsModelKey(*model)
+		presets, hasPresets := HMSPresets[key]
+		if !hasPresets {
+			fmt.Fprintf(os.Stderr, "--hms is not supported for model %s (no HMS presets defined)\n", *model)
+			os.Exit(1)
+		}
+		if *hmsPreset > len(presets) {
+			fmt.Fprintf(os.Stderr, "Invalid --hms preset %d for model %s: valid range is 1-%d\n", *hmsPreset, *model, len(presets))
+			os.Exit(1)
+		}
+	}
 
 	if *count < 1 {
 		fmt.Fprintf(os.Stderr, "Count must be at least 1\n")
@@ -202,7 +220,7 @@ func main() {
 			ext = "RANDOM"
 		}
 
-		printer := NewPrinter(serial, printerModel, allIPs[i], code, specs, ext)
+		printer := NewPrinter(serial, printerModel, allIPs[i], code, specs, ext, *hmsPreset)
 		printers = append(printers, printer)
 	}
 

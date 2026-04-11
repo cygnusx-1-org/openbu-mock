@@ -6,7 +6,43 @@ import (
 	"fmt"
 	mrand "math/rand"
 	"sync"
+	"time"
 )
+
+// HMSPresets are selectable sets of Health Management System error codes, keyed by model
+// group. Only P2S and X1-family printers have defined presets. Preset index is 1-based;
+// 0 means "pick randomly from the model's available presets".
+var HMSPresets = map[string][][]map[string]any{
+	"P2S": {
+		// 1
+		{{"attr": 134180864, "code": 131075}},
+		// 2
+		{{"attr": 50336000, "code": 131074}},
+		// 3
+		{{"attr": 50335744, "code": 131074}},
+	},
+	"X1": {
+		// 1
+		{{"attr": 201327360, "code": 196616}},
+		// 2
+		{{"attr": 201327360, "code": 131076}},
+		// 3
+		{{"attr": 117448960, "code": 196610}},
+		// 4
+		{{"attr": 83886336, "code": 196612}},
+	},
+}
+
+// hmsModelKey returns the HMSPresets map key for the given printer model.
+// X1, X1C, and X1E share the same preset group.
+func hmsModelKey(model string) string {
+	switch model {
+	case "X1", "X1C", "X1E":
+		return "X1"
+	default:
+		return model
+	}
+}
 
 // filamentInfo maps filament type to tray_info_idx, nozzle temp range, and default K value.
 var filamentInfo = map[string]struct {
@@ -54,10 +90,11 @@ type Printer struct {
 	AccessCode string
 	DevModel   string
 
-	mu      sync.RWMutex
-	lightOn bool
-	ams     []*AmsUnit
-	vtTray  *VtTray
+	mu        sync.RWMutex
+	lightOn   bool
+	ams       []*AmsUnit
+	vtTray    *VtTray
+	hmsErrors []map[string]any
 }
 
 // AmsSpec describes a requested AMS unit type and count.
@@ -66,7 +103,7 @@ type AmsSpec struct {
 	Count int
 }
 
-func NewPrinter(serial, model, ip, accessCode string, amsSpecs []AmsSpec, extSpool string) *Printer {
+func NewPrinter(serial, model, ip, accessCode string, amsSpecs []AmsSpec, extSpool string, hmsPreset int) *Printer {
 	p := &Printer{
 		Serial:     serial,
 		Model:      model,
@@ -132,6 +169,30 @@ func NewPrinter(serial, model, ip, accessCode string, amsSpecs []AmsSpec, extSpo
 			NozzleTempMax: info.NozzleTempMax,
 			NozzleTempMin: info.NozzleTempMin,
 			K:             info.K,
+		}
+	}
+
+	if presets := HMSPresets[hmsModelKey(model)]; len(presets) > 0 {
+		idx := hmsPreset
+		if idx == 0 {
+			idx = mrand.Intn(len(presets)) + 1
+		}
+		if idx >= 1 && idx <= len(presets) {
+			now := time.Now().Unix()
+			// Deep-copy the preset so each printer has its own slice, and fill timestamps.
+			src := presets[idx-1]
+			errs := make([]map[string]any, len(src))
+			for i, e := range src {
+				entry := make(map[string]any, len(e))
+				for k, v := range e {
+					entry[k] = v
+				}
+				if _, hasTS := entry["timestamp"]; hasTS {
+					entry["timestamp"] = now
+				}
+				errs[i] = entry
+			}
+			p.hmsErrors = errs
 		}
 	}
 
@@ -221,7 +282,7 @@ func (p *Printer) StatusJSON() []byte {
 			"cali_version":               0,
 			"k":                          "0.0200",
 			"flag3":                      8847,
-			"hms":                        []any{},
+			"hms":                        p.buildHMS(),
 			"online": p.buildOnline(),
 			"vt_tray": p.buildVtTray(),
 			"lights_report": p.buildLightsReport(lightMode),
@@ -642,6 +703,13 @@ func (p *Printer) VersionJSON(sequenceID string) []byte {
 
 	data, _ := json.Marshal(resp)
 	return data
+}
+
+func (p *Printer) buildHMS() []map[string]any {
+	if len(p.hmsErrors) == 0 {
+		return []map[string]any{}
+	}
+	return p.hmsErrors
 }
 
 func randomColor() string {
