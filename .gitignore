@@ -1,3 +1,4 @@
-mock
+dist/*
 ca.pem
+ca.srl
 ca-key.pem
