@@ -13,6 +13,8 @@ import (
 	"syscall"
 )
 
+const Version = "1.0"
+
 var debug *bool
 
 var serialPrefixes = map[string]string{
@@ -59,7 +61,13 @@ func main() {
 	count := flag.Int("count", 1, "Number of mock printers to create")
 	hmsPreset := flag.Int("hms", 0, "HMS error preset number to inject (0 = random, model-specific; P2S: 1-3, X1/X1C/X1E: 1-4)")
 	debug = flag.Bool("debug", false, "Print MQTT status JSON as it is published")
+	showVersion := flag.Bool("version", false, "Print program version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("openbu-mock %s\n", Version)
+		os.Exit(0)
+	}
 
 	*model = strings.ToUpper(*model)
 	*amsFlag = strings.ToUpper(*amsFlag)
@@ -225,7 +233,7 @@ func main() {
 	}
 
 	// Print summary
-	fmt.Println("=== Mock Bambu Lab Printers ===")
+	fmt.Printf("=== Mock Bambu Lab Printers (openbu-mock %s) ===\n", Version)
 	fmt.Println()
 	fmt.Printf("%-16s %-9s %-16s %-10s %-14s %-14s %-10s\n", "IP", "Model", "Serial", "Code", "Device Name", "AMS", "Ext Spool")
 	fmt.Println(strings.Repeat("-", 93))
