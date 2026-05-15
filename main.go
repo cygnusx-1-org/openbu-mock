@@ -287,7 +287,7 @@ func main() {
 	go startSsdp(printers)
 	for _, p := range printers {
 		go startMqtt(ca, p)
-		if p.Model == "P1P" || p.Model == "P1S" {
+		if p.Model == "P1P" || p.Model == "P1S" || p.Model == "A1" || p.Model == "A1-MINI" {
 			go startCamera(ca, p)
 		}
 	}
